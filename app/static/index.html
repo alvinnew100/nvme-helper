@@ -803,7 +803,7 @@
     </div>
 
     <footer class="footer">
-        nvme.helper &mdash; powered by ollama + llama3 &mdash; fully offline
+        nvme.helper &mdash; langchain + faiss + bm25 hybrid search &mdash; fully offline
     </footer>
 </div>
 
@@ -917,7 +917,7 @@ function renderResult(query, data) {
                         <div class="pulse-dot"></div>
                         COMMAND GENERATED
                     </div>
-                    <div class="result-meta">llama3 via ollama</div>
+                    <div class="result-meta">${data.tier === 1 ? 'instant lookup (faiss + bm25)' : 'llama3 via ollama'}</div>
                 </div>
 
                 <div class="result-query-section">
@@ -943,7 +943,15 @@ function renderResult(query, data) {
                 ${warningHtml}
                 ${breakdownHtml}
                 ${sourcesHtml}
+                ${data.tier2_available ? `
+                <div style="padding:12px 18px;border-top:1px solid var(--border-dim);">
+                    <button class="copy-btn" onclick="streamTier2('${escAttr(query)}')" style="padding:8px 16px;font-size:11px;">
+                        GET DETAILED EXPLANATION (LLM)
+                    </button>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-left:8px;">uses ollama llama3</span>
+                </div>` : ''}
             </div>
+            <div id="tier2output"></div>
         </div>
     `;
 }
@@ -983,6 +991,51 @@ function escHtml(s) {
 
 function escAttr(s) {
     return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+async function streamTier2(query) {
+    const t2 = document.getElementById('tier2output');
+    t2.innerHTML = `
+        <div class="result-card" style="margin-top:10px;">
+            <div class="result-bar">
+                <div class="result-status">
+                    <div class="loading-spinner" style="width:14px;height:14px;border-width:2px;"></div>
+                    STREAMING LLM RESPONSE
+                </div>
+                <div class="result-meta">llama3 via ollama</div>
+            </div>
+            <div class="explain-section">
+                <div class="explain-text" id="streamContent" style="white-space:pre-wrap;"></div>
+            </div>
+        </div>
+    `;
+    const el = document.getElementById('streamContent');
+    try {
+        const res = await fetch('/api/generate/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query }),
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const text = line.slice(6);
+                    if (text === '[DONE]') break;
+                    el.textContent += text;
+                }
+            }
+        }
+    } catch (err) {
+        el.textContent += '\n\nError: ' + err.message + '. Make sure Ollama is running.';
+    }
 }
 </script>
 

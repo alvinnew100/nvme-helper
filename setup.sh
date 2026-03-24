@@ -60,15 +60,17 @@ fi
 source venv/bin/activate
 pip install -q -r requirements.txt
 
-# 5. Build embeddings
+# 5. Verify setup (FAISS index builds at server startup, no pre-build needed)
 echo ""
-echo "[5/5] Building document embeddings..."
+echo "[5/5] Verifying installation..."
 python3 -c "
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
+print('  LangChain + FAISS + BM25 imports OK.')
 from app.doc_parser import parse_nvme_docs
-from app.rag import build_vector_store
 docs = parse_nvme_docs('$DATA_DIR/nvme-cli')
-build_vector_store(docs, '$DATA_DIR/chroma')
-print('  Embeddings built successfully.')
+print(f'  Parsed {len(docs)} docs. Setup verified.')
 "
 
 echo ""

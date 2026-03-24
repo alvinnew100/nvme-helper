@@ -2,6 +2,8 @@ import os
 import re
 from pathlib import Path
 
+from langchain_core.documents import Document
+
 
 def parse_nvme_doc(filepath: str) -> dict | None:
     """Parse a single nvme-cli AsciiDoc .txt file into structured sections."""
@@ -76,14 +78,26 @@ def doc_to_chunks(doc: dict) -> list[dict]:
     chunks = []
     command = doc["command"]
 
-    # Main chunk: what the command does + how to use it
+    # Determine if this is a vendor-specific or core command
+    vendor_prefixes = ["wdc", "seagate", "micron", "intel", "solidigm", "ocp", "dapustor", "sndk", "virtium", "toshiba", "shannon", "memblaze", "netapp", "ymtc", "inspur", "huawei", "transcend"]
+    is_vendor = any(v in command.lower() for v in vendor_prefixes)
+
+    # Build searchable text with natural language keywords
+    subcmd = command.replace("nvme-", "").replace("-", " ")
     main_text = f"Command: {command}\n"
+    main_text += f"nvme {subcmd}\n"
+
+    # Add natural language aliases for better search
+    if not is_vendor:
+        main_text += f"Keywords: {subcmd} NVMe\n"
+
     if doc["name"]:
         main_text += f"{doc['name']}\n"
     if doc["synopsis"]:
         main_text += f"\nUsage:\n{doc['synopsis']}\n"
     if doc["description"]:
-        main_text += f"\nDescription:\n{doc['description']}\n"
+        # Only first 300 chars of description to keep chunks focused
+        main_text += f"\nDescription:\n{doc['description'][:300]}\n"
     if doc["examples"]:
         main_text += f"\nExamples:\n{doc['examples']}\n"
 
@@ -105,3 +119,14 @@ def doc_to_chunks(doc: dict) -> list[dict]:
         })
 
     return chunks
+
+
+def chunks_to_langchain_docs(chunks: list[dict]) -> list[Document]:
+    """Convert internal chunk dicts to LangChain Document objects."""
+    return [
+        Document(
+            page_content=c["text"],
+            metadata={"id": c["id"], "command": c["command"], "section": c["section"]},
+        )
+        for c in chunks
+    ]
