@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NVMe Helper</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-void: #05080f;
+            --bg-base: #0a1018;
+            --bg-surface: #0f1923;
+            --bg-elevated: #142231;
+            --bg-input: #080e16;
+            --border-dim: #1a2a3d;
+            --border-mid: #243a52;
+            --border-bright: #2dd4bf;
+            --cyan: #2dd4bf;
+            --cyan-dim: rgba(45, 212, 191, 0.12);
+            --cyan-glow: rgba(45, 212, 191, 0.25);
+            --cyan-intense: rgba(45, 212, 191, 0.5);
+            --amber: #fbbf24;
+            --amber-dim: rgba(251, 191, 36, 0.1);
+            --red: #f87171;
+            --red-dim: rgba(248, 113, 113, 0.1);
+            --text-bright: #e8f0f8;
+            --text-mid: #8fa3b8;
+            --text-dim: #4a6178;
+            --text-ghost: #2a3d52;
+            --mono: 'IBM Plex Mono', monospace;
+            --sans: 'Outfit', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg-void);
+            color: var(--text-bright);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Scanline overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.03) 2px,
+                rgba(0, 0, 0, 0.03) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* Grid background */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(45, 212, 191, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(45, 212, 191, 0.015) 1px, transparent 1px);
+            background-size: 48px 48px;
+            mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 20%, transparent 70%);
+            z-index: 0;
+        }
+
+        /* Ambient glow */
+        .bg-glow {
+            position: fixed;
+            top: -20%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 500px;
+            background: radial-gradient(ellipse, rgba(45, 212, 191, 0.04) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .shell {
+            position: relative;
+            z-index: 1;
+            max-width: 780px;
+            margin: 0 auto;
+            padding: 48px 20px 60px;
+        }
+
+        /* ── HEADER ── */
+        .header {
+            margin-bottom: 44px;
+            animation: slideDown 0.5s ease-out;
+        }
+
+        .header-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 10px;
+        }
+
+        .header-icon {
+            width: 40px;
+            height: 40px;
+            border: 2px solid var(--cyan);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--cyan);
+            background: var(--cyan-dim);
+            box-shadow: 0 0 20px var(--cyan-dim), inset 0 0 12px rgba(45, 212, 191, 0.05);
+            position: relative;
+        }
+
+        .header-icon::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, var(--cyan-glow), transparent 60%);
+            z-index: -1;
+        }
+
+        .header-title {
+            font-family: var(--sans);
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--text-bright);
+        }
+
+        .header-title em {
+            font-style: normal;
+            color: var(--cyan);
+        }
+
+        .header-sub {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            color: var(--text-dim);
+            letter-spacing: 0.3px;
+            padding-left: 54px;
+        }
+
+        .header-sub span {
+            color: var(--cyan);
+            opacity: 0.6;
+        }
+
+        /* ── SEARCH ── */
+        .search-wrap {
+            margin-bottom: 32px;
+            animation: slideUp 0.5s ease-out 0.08s both;
+        }
+
+        .search-box {
+            position: relative;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 12px;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+
+        .search-box:focus-within {
+            border-color: var(--cyan);
+            box-shadow: 0 0 0 3px var(--cyan-dim), 0 12px 40px rgba(0,0,0,0.4);
+        }
+
+        .search-inner {
+            display: flex;
+            align-items: center;
+            padding: 4px;
+        }
+
+        .search-prefix {
+            font-family: var(--mono);
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--cyan);
+            padding: 0 12px 0 16px;
+            user-select: none;
+            opacity: 0.7;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 16px 0;
+            background: none;
+            border: none;
+            color: var(--text-bright);
+            font-family: var(--sans);
+            font-size: 15px;
+            font-weight: 400;
+            outline: none;
+            letter-spacing: 0.1px;
+        }
+
+        .search-input::placeholder {
+            color: var(--text-ghost);
+            font-weight: 300;
+        }
+
+        .search-btn {
+            margin-right: 4px;
+            padding: 12px 22px;
+            background: var(--cyan);
+            color: var(--bg-void);
+            border: none;
+            border-radius: 9px;
+            font-family: var(--mono);
+            font-size: 12.5px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .search-btn:hover {
+            background: #5eead4;
+            box-shadow: 0 4px 20px var(--cyan-glow);
+        }
+
+        .search-btn:active {
+            transform: scale(0.97);
+        }
+
+        .search-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .search-hints {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 0 4px;
+        }
+
+        .hint-tag {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-dim);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .hint-tag:hover {
+            border-color: var(--border-mid);
+            color: var(--text-mid);
+        }
+
+        /* ── QUICK ACTIONS ── */
+        .quick-section {
+            margin-bottom: 36px;
+            animation: slideUp 0.5s ease-out 0.16s both;
+        }
+
+        .section-tag {
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-dim);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-tag::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border-dim);
+        }
+
+        .actions-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .actions-row { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .action-card {
+            padding: 12px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .action-card:hover {
+            border-color: var(--border-mid);
+            background: var(--bg-elevated);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+        }
+
+        .action-card:hover .action-label { color: var(--text-bright); }
+
+        .action-indicator {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .action-indicator.c { background: var(--cyan); box-shadow: 0 0 6px var(--cyan-dim); }
+        .action-indicator.a { background: var(--amber); box-shadow: 0 0 6px var(--amber-dim); }
+        .action-indicator.r { background: var(--red); box-shadow: 0 0 6px var(--red-dim); }
+
+        .action-label {
+            font-family: var(--sans);
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-mid);
+            transition: color 0.15s;
+        }
+
+        .action-cmd {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.2px;
+        }
+
+        /* ── RESULT CARD ── */
+        .result-wrap {
+            animation: fadeIn 0.35s ease-out;
+        }
+
+        .result-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+
+        .result-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--border-dim);
+            background: var(--bg-elevated);
+        }
+
+        .result-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--cyan);
+            letter-spacing: 0.3px;
+        }
+
+        .pulse-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--cyan);
+            box-shadow: 0 0 8px var(--cyan-glow);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .result-meta {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .result-query-section {
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--border-dim);
+        }
+
+        .micro-label {
+            font-family: var(--mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-dim);
+            margin-bottom: 5px;
+        }
+
+        .query-echo {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--text-mid);
+            font-weight: 300;
+        }
+
+        /* Command block */
+        .cmd-section {
+            padding: 18px;
+        }
+
+        .cmd-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .cmd-label {
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--cyan);
+        }
+
+        .copy-btn {
+            padding: 5px 12px;
+            background: var(--cyan-dim);
+            border: 1px solid rgba(45, 212, 191, 0.15);
+            border-radius: 5px;
+            color: var(--cyan);
+            font-family: var(--mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            letter-spacing: 0.3px;
+        }
+
+        .copy-btn:hover {
+            background: var(--cyan-glow);
+            border-color: rgba(45, 212, 191, 0.3);
+        }
+
+        .copy-btn.copied {
+            background: rgba(45, 212, 191, 0.2);
+            color: #5eead4;
+        }
+
+        .cmd-block {
+            background: var(--bg-input);
+            border: 1px solid var(--border-dim);
+            border-radius: 8px;
+            padding: 16px 18px;
+            font-family: var(--mono);
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        .cmd-block::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--cyan);
+            border-radius: 3px 0 0 3px;
+            opacity: 0.4;
+        }
+
+        .c-prompt { color: var(--cyan); opacity: 0.5; user-select: none; }
+        .c-cmd { color: var(--text-bright); font-weight: 500; }
+        .c-device { color: #a78bfa; }
+        .c-flag { color: var(--amber); }
+        .c-value { color: #67e8f9; }
+
+        /* Explanation */
+        .explain-section {
+            padding: 16px 18px;
+            border-top: 1px solid var(--border-dim);
+        }
+
+        .explain-text {
+            font-family: var(--sans);
+            font-size: 13.5px;
+            color: var(--text-mid);
+            line-height: 1.6;
+            font-weight: 300;
+        }
+
+        /* Breakdown */
+        .breakdown-section {
+            padding: 0 18px 18px;
+        }
+
+        .breakdown-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .breakdown-item {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            font-size: 12.5px;
+        }
+
+        .bd-flag {
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--cyan);
+            background: var(--cyan-dim);
+            padding: 2px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .bd-desc {
+            font-family: var(--sans);
+            color: var(--text-mid);
+            font-weight: 300;
+        }
+
+        /* Warning */
+        .warning-bar {
+            margin: 0 18px 14px;
+            padding: 10px 14px;
+            background: var(--red-dim);
+            border: 1px solid rgba(248, 113, 113, 0.15);
+            border-radius: 7px;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--red);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .warning-bar::before {
+            content: '!';
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            background: rgba(248, 113, 113, 0.15);
+            border-radius: 50%;
+            font-weight: 700;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        /* Sources */
+        .sources-section {
+            padding: 12px 18px;
+            border-top: 1px solid var(--border-dim);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .source-tag {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-dim);
+            background: var(--bg-base);
+            border: 1px solid var(--border-dim);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+
+        /* ── LOADING ── */
+        .loading-wrap {
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .loading-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 2.5px solid var(--border-dim);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .loading-text {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+
+        .loading-text span {
+            animation: blink 1s step-end infinite;
+        }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            animation: slideUp 0.5s ease-out 0.24s both;
+        }
+
+        .empty-state p {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text-ghost);
+            letter-spacing: 0.3px;
+        }
+
+        .empty-art {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-ghost);
+            line-height: 1.4;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        /* ── FOOTER ── */
+        .footer {
+            text-align: center;
+            margin-top: 48px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-dim);
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-ghost);
+            letter-spacing: 0.5px;
+            animation: slideUp 0.5s ease-out 0.32s both;
+        }
+
+        .footer a {
+            color: var(--text-dim);
+            text-decoration: none;
+        }
+
+        /* ── ANIMATIONS ── */
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 480px) {
+            .shell { padding: 32px 14px 40px; }
+            .header-title { font-size: 22px; }
+            .header-sub { padding-left: 0; margin-top: 8px; }
+            .search-prefix { display: none; }
+            .actions-row { gap: 6px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="bg-glow"></div>
+
+<div class="shell">
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-row">
+            <div class="header-icon">N&gt;_</div>
+            <h1 class="header-title">nvme<em>.helper</em></h1>
+        </div>
+        <p class="header-sub"><span>//</span> describe what you need &mdash; get the exact command</p>
+    </header>
+
+    <!-- Search -->
+    <section class="search-wrap">
+        <div class="search-box">
+            <div class="search-inner">
+                <span class="search-prefix">&gt;</span>
+                <input
+                    type="text"
+                    class="search-input"
+                    id="queryInput"
+                    placeholder="show me the SMART health log for drive 0"
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <button class="search-btn" id="generateBtn" onclick="generate()">RUN</button>
+            </div>
+        </div>
+        <div class="search-hints">
+            <span class="hint-tag" onclick="fillAndRun('list all nvme devices')">list devices</span>
+            <span class="hint-tag" onclick="fillAndRun('format namespace 1 with 4K blocks')">format 4K</span>
+            <span class="hint-tag" onclick="fillAndRun('check firmware version on nvme0')">firmware info</span>
+            <span class="hint-tag" onclick="fillAndRun('read error log for nvme0')">error log</span>
+        </div>
+    </section>
+
+    <!-- Quick Actions -->
+    <section class="quick-section">
+        <div class="section-tag">Quick Operations</div>
+        <div class="actions-row">
+            <div class="action-card" onclick="fillAndRun('list all NVMe devices and namespaces')">
+                <div class="action-indicator c"></div>
+                <div class="action-label">List Devices</div>
+                <div class="action-cmd">nvme list</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('show SMART health info for nvme0')">
+                <div class="action-indicator c"></div>
+                <div class="action-label">SMART Health</div>
+                <div class="action-cmd">nvme smart-log</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('identify controller details for nvme0')">
+                <div class="action-indicator c"></div>
+                <div class="action-label">Identify Ctrl</div>
+                <div class="action-cmd">nvme id-ctrl</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('get namespace details for nvme0n1')">
+                <div class="action-indicator c"></div>
+                <div class="action-label">Namespace Info</div>
+                <div class="action-cmd">nvme id-ns</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('get firmware log for nvme0')">
+                <div class="action-indicator a"></div>
+                <div class="action-label">Firmware Log</div>
+                <div class="action-cmd">nvme fw-log</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('show error log entries for nvme0')">
+                <div class="action-indicator a"></div>
+                <div class="action-label">Error Log</div>
+                <div class="action-cmd">nvme error-log</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('format namespace 1 with 4K block size on nvme0')">
+                <div class="action-indicator r"></div>
+                <div class="action-label">Format Drive</div>
+                <div class="action-cmd">nvme format</div>
+            </div>
+            <div class="action-card" onclick="fillAndRun('secure erase namespace 1 on nvme0')">
+                <div class="action-indicator r"></div>
+                <div class="action-label">Secure Erase</div>
+                <div class="action-cmd">nvme sanitize</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Output Area -->
+    <div id="output">
+        <div class="empty-state">
+            <div class="empty-art">
+  ┌──────────────────────┐
+  │  awaiting query...   │
+  └──────────────────────┘
+            </div>
+            <p>type a question or click a quick action above</p>
+        </div>
+    </div>
+
+    <footer class="footer">
+        nvme.helper &mdash; powered by ollama + llama3 &mdash; fully offline
+    </footer>
+</div>
+
+<script>
+const input = document.getElementById('queryInput');
+const btn = document.getElementById('generateBtn');
+const output = document.getElementById('output');
+
+input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !btn.disabled) generate();
+});
+
+function fillAndRun(text) {
+    input.value = text;
+    generate();
+}
+
+async function generate() {
+    const query = input.value.trim();
+    if (!query) return;
+
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    output.innerHTML = `
+        <div class="loading-wrap">
+            <div class="loading-card">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">generating command<span>_</span></div>
+            </div>
+        </div>
+    `;
+
+    try {
+        const res = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query }),
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderResult(query, data);
+    } catch (err) {
+        output.innerHTML = `
+            <div class="result-wrap">
+                <div class="result-card">
+                    <div class="result-bar">
+                        <div class="result-status" style="color: var(--red)">
+                            <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red)"></span>
+                            ERROR
+                        </div>
+                    </div>
+                    <div class="cmd-section">
+                        <div class="cmd-block" style="border-color: rgba(248,113,113,0.2);">
+                            <span class="c-cmd">${escHtml(err.message)}</span>
+                        </div>
+                        <p style="margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+                            Make sure Ollama is running and the setup has been completed.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        `;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'RUN';
+    }
+}
+
+function renderResult(query, data) {
+    const cmdHtml = highlightCmd(data.command);
+
+    let breakdownHtml = '';
+    if (data.breakdown && data.breakdown.length > 0) {
+        breakdownHtml = `
+            <div class="breakdown-section">
+                <div class="micro-label" style="margin-bottom:8px;">Breakdown</div>
+                <div class="breakdown-list">
+                    ${data.breakdown.map(b => `
+                        <div class="breakdown-item">
+                            <span class="bd-flag">${escHtml(b.flag)}</span>
+                            <span class="bd-desc">${escHtml(b.description)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    let warningHtml = '';
+    if (data.warning) {
+        warningHtml = `<div class="warning-bar">${escHtml(data.warning)}</div>`;
+    }
+
+    let sourcesHtml = '';
+    if (data.sources && data.sources.length > 0) {
+        sourcesHtml = `
+            <div class="sources-section">
+                <span class="micro-label" style="margin:0;">Sources</span>
+                ${data.sources.map(s => `<span class="source-tag">${escHtml(s)}</span>`).join('')}
+            </div>
+        `;
+    }
+
+    output.innerHTML = `
+        <div class="result-wrap">
+            <div class="result-card">
+                <div class="result-bar">
+                    <div class="result-status">
+                        <div class="pulse-dot"></div>
+                        COMMAND GENERATED
+                    </div>
+                    <div class="result-meta">llama3 via ollama</div>
+                </div>
+
+                <div class="result-query-section">
+                    <div class="micro-label">Query</div>
+                    <div class="query-echo">"${escHtml(query)}"</div>
+                </div>
+
+                <div class="cmd-section">
+                    <div class="cmd-header">
+                        <span class="cmd-label">Command</span>
+                        <button class="copy-btn" onclick="copyCmd(this, '${escAttr(data.command)}')">COPY</button>
+                    </div>
+                    <div class="cmd-block">
+                        <span class="c-prompt">$ </span>${cmdHtml}
+                    </div>
+                </div>
+
+                <div class="explain-section">
+                    <div class="micro-label">Explanation</div>
+                    <p class="explain-text">${escHtml(data.explanation)}</p>
+                </div>
+
+                ${warningHtml}
+                ${breakdownHtml}
+                ${sourcesHtml}
+            </div>
+        </div>
+    `;
+}
+
+function highlightCmd(cmd) {
+    if (!cmd || cmd.startsWith('Error')) return `<span class="c-cmd">${escHtml(cmd)}</span>`;
+
+    return cmd.split(' ').map((token, i) => {
+        if (i === 0 && token === 'nvme') return `<span class="c-cmd">nvme</span>`;
+        if (i === 1 && !token.startsWith('-') && !token.startsWith('/')) return `<span class="c-cmd">${escHtml(token)}</span>`;
+        if (token.startsWith('/dev/')) return `<span class="c-device">${escHtml(token)}</span>`;
+        if (token.startsWith('--')) {
+            const parts = token.split('=');
+            if (parts.length > 1) return `<span class="c-flag">${escHtml(parts[0])}</span>=<span class="c-value">${escHtml(parts.slice(1).join('='))}</span>`;
+            return `<span class="c-flag">${escHtml(token)}</span>`;
+        }
+        if (token.startsWith('-')) return `<span class="c-flag">${escHtml(token)}</span>`;
+        return `<span class="c-value">${escHtml(token)}</span>`;
+    }).join(' ');
+}
+
+function copyCmd(btn, cmd) {
+    navigator.clipboard.writeText(cmd);
+    btn.textContent = 'COPIED';
+    btn.classList.add('copied');
+    setTimeout(() => {
+        btn.textContent = 'COPY';
+        btn.classList.remove('copied');
+    }, 2000);
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+}
+
+function escAttr(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+</script>
+
+</body>
+</html>

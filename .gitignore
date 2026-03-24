@@ -1,0 +1,8 @@
+venv/
+data/nvme-cli/
+data/chroma/
+__pycache__/
+*.pyc
+.DS_Store
+/tmp/
+*.log
